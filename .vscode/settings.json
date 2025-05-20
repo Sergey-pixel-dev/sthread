@@ -10,7 +10,8 @@
         "time.h": "c",
         "compare": "c",
         "cstdint": "c",
-        "format": "c"
+        "format": "c",
+        "stdint.h": "c"
     },
     "makefile.configureOnOpen": false
 }

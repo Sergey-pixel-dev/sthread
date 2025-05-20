@@ -15,3 +15,24 @@
                (void *)saved_ctx.stack_ptr,
                saved_ctx.stack_size);
     } */
+
+    /* // HasStarted == 0 ни разу не запускали sheduler -> не зачем сохранять пред контекст
+    // иначе сохраняем
+    if (HasStarted)
+    {
+        ucontext_t *uc = (ucontext_t *)ucontext;
+        memcpy(cur->context.gregs,
+               uc->uc_mcontext.gregs,
+               sizeof(cur->context.gregs));
+        cur->context.rip = uc->uc_mcontext.gregs[REG_RIP];
+        cur->context.eflags = uc->uc_mcontext.gregs[REG_EFL];
+        HasStarted = 1;
+    }
+    cur = cur->next; */
+
+    // context_swap(&cur->context);
+
+    /* sthread *temp = cur->next;
+    sthread_free(cur);
+    cur = temp;
+    head = cur; */
