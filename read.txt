@@ -1,0 +1,17 @@
+// 1) Сохраняем все целочисленные регистры из mcontext.gregs
+
+    /* memcpy(saved_ctx.fxsave,
+           uc->uc_mcontext.fpregs->_xstate,
+           sizeof(saved_ctx.fxsave)); */
+
+    // 4) Сохраняем указатель стека и копируем его содержимое
+    /* saved_ctx.stack_ptr = (void *)uc->uc_mcontext.gregs[REG_RSP];
+    saved_ctx.stack_size = MAX_STACK_SAVE;
+    saved_ctx.stack_copy = malloc(saved_ctx.stack_size);
+    if (saved_ctx.stack_copy)
+    {
+        // копируем от текущего RSP вверх по адресу
+        memcpy(saved_ctx.stack_copy,
+               (void *)saved_ctx.stack_ptr,
+               saved_ctx.stack_size);
+    } */

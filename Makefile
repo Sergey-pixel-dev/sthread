@@ -6,7 +6,7 @@ CFLAGS := -Wall -g
 ASMFLAGS := -f elf64 -g
 
 TARGET := myprog
-OBJS := main.o stack_switcher.o
+OBJS := main.o context_swap.o
 
 all: $(TARGET)
 
@@ -16,7 +16,7 @@ $(TARGET): $(OBJS)
 main.o: main.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-stack_switcher.o: stack_switcher.asm
+context_swap.o: context_swap.asm
 	$(ASM) $(ASMFLAGS) $< -o $@
 
 clean:
