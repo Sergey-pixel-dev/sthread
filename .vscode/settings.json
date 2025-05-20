@@ -1,0 +1,13 @@
+{
+    "files.associations": {
+        "*.asm": "nasm",
+        "timer_t.h": "c",
+        "cstdlib": "c",
+        "memory_resource": "c",
+        "memory": "c",
+        "new": "c",
+        "stdio.h": "c",
+        "time.h": "c"
+    },
+    "makefile.configureOnOpen": false
+}
