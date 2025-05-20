@@ -19,8 +19,8 @@ struct scontext
     uint64_t eflags;    // флаги
     // uint8_t fxsave[512] __attribute__((aligned(16))); // FPU/SSE состояние (XSAVE frame)
     void *stack_ptr; // RSP
-    // size_t stack_size;                             // для полного снимка стека
-    // void *stack_copy;                              // указатель на копию содержимого стека
+    // size_t stack_size;                                // для полного снимка стека
+    // void *stack_copy;                                 // указатель на копию содержимого стека
 };
 struct sthread
 {
@@ -46,16 +46,40 @@ void foo(void *arg) //
     }
 }
 
+static inline void save_context(scontext *dst, mcontext_t *src)
+{
+    memcpy(dst->gregs,
+           src->gregs,
+           sizeof(dst->gregs));
+
+    dst->rip = src->gregs[REG_RIP];
+    dst->eflags = src->gregs[REG_EFL];
+
+    // 4) Стек (RSP) — фиксированного снимка
+    dst->stack_ptr = (void *)src->gregs[REG_RSP];
+}
+
+static inline void load_context(scontext *src, ucontext_t *dst_uc)
+{
+    mcontext_t *dst = &dst_uc->uc_mcontext;
+
+    // only general-purpose registers 0..13
+    for (int i = 0; i <= REG_RAX; i++)
+        dst->gregs[i] = src->gregs[i];
+
+    // явно задаём RSP, RIP, EFL
+    dst->gregs[REG_RSP] = src->gregs[REG_RSP];
+    dst->gregs[REG_RIP] = src->gregs[REG_RIP];
+    dst->gregs[REG_EFL] = src->gregs[REG_EFL];
+
+    // 4) Стековый указатель
+    dst->gregs[REG_RSP] = (uintptr_t)src->stack_ptr;
+}
+
 void timer_handler(int sig, siginfo_t *info, void *ucontext)
 {
 
-    if (head == NULL)
-        return;
-    if (cur == NULL) // при первом запуске
-    {
-        cur = head;
-    }
-    // HasStarted == 0 ни разу не запускали sheduler -> не зачем сохранять пред контекст
+    /* // HasStarted == 0 ни разу не запускали sheduler -> не зачем сохранять пред контекст
     // иначе сохраняем
     if (HasStarted)
     {
@@ -67,19 +91,34 @@ void timer_handler(int sig, siginfo_t *info, void *ucontext)
         cur->context.eflags = uc->uc_mcontext.gregs[REG_EFL];
         HasStarted = 1;
     }
-    cur = cur->next;
-    context_swap(&cur->context);
+    cur = cur->next; */
+
+    // context_swap(&cur->context);
 
     /* sthread *temp = cur->next;
     sthread_free(cur);
     cur = temp;
     head = cur; */
     // переход дальше (список закольцован)
+    if (head == NULL)
+        return;
+    if (cur == NULL) // при первом запуске
+    {
+        cur = head;
+    }
+    ucontext_t *uc = (ucontext_t *)ucontext;
+    if (HasStarted)
+    {
+        save_context(&cur->context, &uc->uc_mcontext);
+    }
+    load_context(&cur->next->context, uc);
+    cur = cur->next;
+    HasStarted = 1;
 }
 
 void sthread_create(void (*pfunc)(void *), void *func_arg)
 {
-    sthread *thread = malloc(sizeof(sthread));
+    sthread *thread = calloc(1, sizeof(*thread));
 
     thread->stack = (char *)malloc(STACK_SIZE);
     thread->stack_size = STACK_SIZE;
@@ -90,15 +129,18 @@ void sthread_create(void (*pfunc)(void *), void *func_arg)
 
     thread->context.rip = 0;
     thread->context.stack_ptr = thread->stack + STACK_SIZE;
-    thread->context.gregs[REG_RSP] = (uint64_t)(uintptr_t)thread->context.stack_ptr;
+    // обнуляем весь массив
+    memset(thread->context.gregs, 0, sizeof(thread->context.gregs));
+    thread->context.gregs[REG_RSP] = (uint64_t)(uintptr_t)thread->stack + STACK_SIZE;
     thread->context.gregs[REG_RIP] = (uint64_t)(uintptr_t)thread->pfunc;
+    thread->context.gregs[REG_EFL] = 0x202; // по дефолту
+
     if (head == NULL)
     {
         head = tail = thread;
     }
     else
     {
-
         tail->next = thread;
         tail = thread;
         tail->next = head;
