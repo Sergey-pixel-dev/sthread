@@ -22,6 +22,7 @@ struct sthread
     void *func_arg;
     scontext context;
     sthread *next;
+    sthread *prev;
     sthread_state state;
 };
 
@@ -32,14 +33,20 @@ char HasStarted = 0;
 void foo(void *arg) //
 {
     printf("Hello, world, SThread: %d!\n", *(int *)arg);
-    while (1)
+    uint64_t i = 0;
+    while (*(int *)arg == 4)
     {
-        /* code */
+        i++;
+        if (i % 1000000000 == 0)
+        {
+            printf("sffsfas\n");
+        }
     }
 }
 
-static inline void save_context(scontext *dst, mcontext_t *src)
+static inline void save_context(sthread *sthread_dst, mcontext_t *src)
 {
+    scontext *dst = &sthread_dst->context;
     memcpy(dst->gregs,
            src->gregs,
            sizeof(dst->gregs));
@@ -49,8 +56,9 @@ static inline void save_context(scontext *dst, mcontext_t *src)
     dst->stack_ptr = (void *)src->gregs[REG_RSP];
 }
 
-static inline void load_context(scontext *src, ucontext_t *dst_uc)
+static inline void load_context(sthread *sthread_src, ucontext_t *dst_uc)
 {
+    scontext *src = &sthread_src->context;
     mcontext_t *dst = &dst_uc->uc_mcontext;
     for (int i = 0; i <= REG_RAX; i++) // копируем не все регистры из массива,
         dst->gregs[i] = src->gregs[i]; // так как там есть служебные, и их копирование
@@ -60,15 +68,16 @@ static inline void load_context(scontext *src, ucontext_t *dst_uc)
     dst->gregs[REG_RIP] = src->gregs[REG_RIP];
     dst->gregs[REG_EFL] = src->gregs[REG_EFL];
 }
-static inline void load_context_with_parametr(scontext *src, ucontext_t *dst_uc)
+static inline void load_context_with_parametr(sthread *sthread_src, ucontext_t *dst_uc)
 {
+    scontext *src = &sthread_src->context;
     mcontext_t *dst = &dst_uc->uc_mcontext;
     for (int i = 0; i <= REG_RAX; i++)
         dst->gregs[i] = src->gregs[i];
     dst->gregs[REG_RSP] = src->gregs[REG_RSP];
     dst->gregs[REG_RIP] = src->gregs[REG_RIP];
     dst->gregs[REG_EFL] = src->gregs[REG_EFL];
-    dst->gregs[REG_RDI] = (uint64_t)(uintptr_t)cur->func_arg;
+    dst->gregs[REG_RDI] = (uint64_t)(uintptr_t)sthread_src->func_arg;
 }
 void timer_handler(int sig, siginfo_t *info, void *ucontext)
 {
@@ -81,17 +90,17 @@ void timer_handler(int sig, siginfo_t *info, void *ucontext)
     ucontext_t *uc = (ucontext_t *)ucontext;
     if (HasStarted)
     {
-        save_context(&cur->context, &uc->uc_mcontext);
+        save_context(cur, &uc->uc_mcontext);
     }
     switch (cur->state)
     {
     case NEW:
-        load_context_with_parametr(&cur->next->context, uc);
+        load_context_with_parametr(cur->next, uc);
         cur->state = RUN;
         HasStarted = 1;
         break;
     case RUN:
-        load_context(&cur->next->context, uc);
+        load_context(cur->next, uc);
         break;
     case DONE:
         // delete_current_thread();
@@ -101,52 +110,58 @@ void timer_handler(int sig, siginfo_t *info, void *ucontext)
     default:
         break;
     }
-
     cur = cur->next;
 }
 
 void sthread_create(void (*pfunc)(void *), void *func_arg)
 {
     sthread *thread = calloc(1, sizeof(*thread));
+    if (!thread)
+        exit(1);
 
-    thread->stack = (char *)malloc(STACK_SIZE);
+    thread->stack = malloc(STACK_SIZE);
     thread->stack_size = STACK_SIZE;
     thread->id = id++;
     thread->pfunc = pfunc;
     thread->func_arg = func_arg;
-    thread->next = NULL;
     thread->state = NEW;
 
-    thread->context.stack_ptr = thread->stack + STACK_SIZE;
+    /* Инициализируем контекст: стек и RIP */
+    thread->context.stack_ptr = (char *)thread->stack + STACK_SIZE;
     uint64_t *sp = (uint64_t *)thread->context.stack_ptr;
     *--sp = thread->id;
     *--sp = (uint64_t)(uintptr_t)sthread_exit;
     thread->context.stack_ptr = sp;
     thread->context.gregs[REG_RSP] = (uint64_t)(uintptr_t)sp;
-
     thread->context.gregs[REG_RIP] = (uint64_t)(uintptr_t)thread->pfunc;
-    // thread->context.gregs[REG_EFL] = 0x202;
+
+    /* Вставка в двусвязный циклический список */
     if (head == NULL)
     {
+        // первый поток
         head = tail = thread;
         thread->next = thread;
+        thread->prev = thread;
     }
     else
     {
+        // между tail и head
+        thread->prev = tail;
+        thread->next = head;
         tail->next = thread;
+        head->prev = thread;
         tail = thread;
-        tail->next = head;
     }
 }
-
 void sthread_exit()
 {
     uintptr_t sp;
     __asm__ volatile("movq %%rsp, %0" : "=r"(sp));
-    int tid = *(int *)sp;
-    printf("Close thread %d\n", tid);
+    sp += 24; // 24 байта помещается в стек из-за uintptr_t sp;
+    uint64_t tid = *(uint64_t *)sp;
+    printf("Close thread %lu\n", tid);
 
-    cur->state = DONE;
+    cur->prev->state = DONE;
     raise(SIGALRM);
     for (;;)
         __asm__ volatile("pause");
@@ -156,24 +171,29 @@ void delete_current_thread(void)
 {
     if (!cur)
         return;
+
     sthread *to_del = cur;
 
     if (to_del->next == to_del)
     {
+        // единственный в списке
         free(to_del->stack);
         free(to_del);
         head = tail = cur = NULL;
         return;
     }
-    sthread *prev = head;
-    while (prev->next != to_del)
-        prev = prev->next;
-    prev->next = to_del->next;
+
+    // вынимаем to_del из списка
+    to_del->prev->next = to_del->next;
+    to_del->next->prev = to_del->prev;
+
+    // корректируем head/tail
     if (to_del == head)
         head = to_del->next;
     if (to_del == tail)
-        tail = prev;
+        tail = to_del->prev;
 
+    // переключаем cur и освобождаем
     cur = to_del->next;
     free(to_del->stack);
     free(to_del);
@@ -192,16 +212,20 @@ int main()
     // Настройка таймера
     timer.it_value.tv_sec = 1; // Первое срабатывание
     timer.it_value.tv_usec = 0;
-    timer.it_interval.tv_sec = 2; // Интервал
+    timer.it_interval.tv_sec = 1; // Интервал
     timer.it_interval.tv_usec = 0;
     printf("Creating sthread...\n");
-    int a, b, c;
+    int a, b, c, d, f;
     a = 0;
     b = 1;
     c = 2;
+    d = 3;
+    f = 4;
     sthread_create(foo, &a);
     sthread_create(foo, &b);
     sthread_create(foo, &c);
+    sthread_create(foo, &d);
+    sthread_create(foo, &f);
     printf("Sthread is created\n");
     setitimer(ITIMER_REAL, &timer, NULL);
 
